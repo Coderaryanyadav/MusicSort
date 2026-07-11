@@ -1,0 +1,3 @@
+from musicsort.services.classifier import SmartClassifier
+from musicsort.services.backup_service import BackupService
+from musicsort.services.report_generator import ReportGenerator
