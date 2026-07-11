@@ -118,6 +118,17 @@ class BackupService:
                 continue
                 
             try:
+                # Retrieve current path from SQLite database to delete the sorted copy
+                song = self.db.get_song(song_id)
+                if song and song.get("current_path"):
+                    curr_path = Path(song["current_path"])
+                    if curr_path.exists() and curr_path.resolve() != orig_path.resolve():
+                        try:
+                            curr_path.unlink()
+                            self.op_logger.info(f"Cleaned up sorted copy on restore: {curr_path}")
+                        except Exception as delete_err:
+                            self.err_logger.error(f"Failed to delete sorted copy {curr_path}: {delete_err}")
+
                 # Ensure parents exist
                 orig_path.parent.mkdir(parents=True, exist_ok=True)
                 # Move back

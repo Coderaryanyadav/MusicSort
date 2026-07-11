@@ -9,7 +9,7 @@ def get_dark_stylesheet() -> str:
     QWidget {
         background-color: #121212;
         color: #e0e0e0;
-        font-family: "Outfit", "Inter", "Segoe UI", "SF Pro Display", -apple-system, sans-serif;
+        font-family: -apple-system, "SF Pro Text", "Segoe UI", Helvetica, Arial, sans-serif;
         font-size: 13px;
     }
     
@@ -284,7 +284,7 @@ def get_light_stylesheet() -> str:
     QWidget {
         background-color: #f4f4f5;
         color: #333333;
-        font-family: "Outfit", "Inter", "Segoe UI", "SF Pro Display", -apple-system, sans-serif;
+        font-family: -apple-system, "SF Pro Text", "Segoe UI", Helvetica, Arial, sans-serif;
         font-size: 13px;
     }
     

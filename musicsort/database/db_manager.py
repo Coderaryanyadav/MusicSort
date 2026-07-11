@@ -114,6 +114,14 @@ class DBManager:
             
             conn.commit()
 
+            # Create performance indexes for large library queries
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_songs_folder ON songs(folder_assignment);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_songs_artist ON songs(artist);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_songs_favorite ON songs(favorite);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_songs_hash ON songs(file_hash);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_backup_entries_session ON backup_entries(backup_id);")
+            conn.commit()
+
             # Seed default categories
             cursor.execute("SELECT COUNT(*) FROM categories;")
             if cursor.fetchone()[0] == 0:

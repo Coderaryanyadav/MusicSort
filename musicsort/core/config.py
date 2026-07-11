@@ -42,7 +42,7 @@ SUPPORTED_EXTENSIONS: Set[str] = {
 
 # Default initial categories (User can add/remove later via DB)
 DEFAULT_CATEGORIES: List[str] = [
-    "Romantic", "Heartbreak", "Chill", "Night Drive", "Workout",
+    "Romantic", "Heartbreak", "Chill", "Night Drive", "Workout", "Party",
     "Punjabi", "Rap", "English", "Bollywood", "Devotional", "Others"
 ]
 

@@ -7,16 +7,19 @@ class SmartClassifier:
     """
     Classifier engine that learns from historical category assignments stored in SQLite.
     Predicts and suggests folder classifications based on multiple features (Artist, Genre, Album, Keywords).
+    Enforces active database folder category constraints to prevent foreign key errors.
     """
     def __init__(self, db_manager: Optional[DBManager] = None):
         self.db = db_manager if db_manager else DBManager()
         self.artist_model: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
         self.genre_model: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
         self.album_model: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        self.active_categories: set[str] = set()
         self.trained = False
 
     def train(self):
         """Loads historical decisions from the DB and trains the frequency models."""
+        self.active_categories = set(self.db.get_categories())
         songs = self.db.get_all_songs()
         
         # Reset frequencies
@@ -27,10 +30,12 @@ class SmartClassifier:
         trained_count = 0
         for s in songs:
             # We train only on files that have been explicitly classified by the user
-            # (ignoring default 'Others' classification unless it was explicitly kept,
-            # but usually songs that have times_organized > 0 are perfect training samples)
             if s.get("times_organized", 0) > 0 or s.get("folder_assignment") != "Others":
                 folder = s.get("folder_assignment", "Others")
+                
+                # Verify that the folder assignment still exists in the active categories list
+                if folder not in self.active_categories:
+                    folder = "Others"
                 
                 artist = s.get("artist", "").strip().lower()
                 genre = s.get("genre", "").strip().lower()
@@ -50,10 +55,15 @@ class SmartClassifier:
     def classify(self, song: Song) -> Tuple[str, int]:
         """
         Classifies a song based on historical probability, falling back to keywords matching.
+        Guarantees that the suggested category exists in active DB categories to prevent foreign key issues.
         Returns a tuple of (Suggested Category, Confidence Score %).
         """
         if not self.trained:
             self.train()
+
+        # Helper to ensure target exists in active folders
+        def validate_category(category: str) -> str:
+            return category if category in self.active_categories else "Others"
 
         artist = song.artist.strip().lower()
         genre = song.genre.strip().lower()
@@ -64,19 +74,19 @@ class SmartClassifier:
         if album and album in self.album_model:
             folders = self.album_model[album]
             best_folder = max(folders, key=folders.get)
-            return best_folder, 95
+            return validate_category(best_folder), 95
 
         # 2. Match by Artist
         if artist and artist != "unknown artist" and artist in self.artist_model:
             folders = self.artist_model[artist]
             best_folder = max(folders, key=folders.get)
-            return best_folder, 90
+            return validate_category(best_folder), 90
 
         # 3. Match by Genre
         if genre and genre in self.genre_model:
             folders = self.genre_model[genre]
             best_folder = max(folders, key=folders.get)
-            return best_folder, 80
+            return validate_category(best_folder), 80
 
         # 4. Fallback Keyword Matcher (Rule-based guesses)
         # Check title, genre, and path for category indicator keywords
@@ -92,7 +102,7 @@ class SmartClassifier:
         for folder, keywords in keywords_map.items():
             for kw in keywords:
                 if kw in title or kw in genre:
-                    return folder, 70
+                    return validate_category(folder), 70
 
         # 5. Default Category
         return "Others", 50
