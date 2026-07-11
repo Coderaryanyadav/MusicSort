@@ -52,10 +52,10 @@ class ValidationIssue:
 
 @dataclass
 class OperationPreview:
-    song_id: str = ""
     original_path: Path
     target_path: Path
     operation_type: str  # "rename", "move", "rename_and_move"
+    song_id: str = ""
     status: str = "pending"  # "pending", "success", "skipped", "failed", "conflict"
     error_message: Optional[str] = None
 
