@@ -1,13 +1,15 @@
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot, QUrl
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
                              QLineEdit, QTableWidget, QTableWidgetItem, QComboBox, 
-                             QHeaderView, QDialog, QFormLayout, QCheckBox, QMessageBox)
-from typing import Optional
+                             QHeaderView, QDialog, QFormLayout, QCheckBox, QMessageBox,
+                             QSlider, QMenu)
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from musicsort.database.db_manager import DBManager
+from typing import Optional, List, Dict
 
 class TagEditDialog(QDialog):
     """Dialog for manual editing of song tags, rating, and classification."""
-    def __init__(self, song_data: dict, categories: list[str], parent=None):
+    def __init__(self, song_data: dict, categories: List[str], parent=None):
         super().__init__(parent)
         self.song_data = song_data
         self.categories = categories
@@ -76,14 +78,25 @@ class TagEditDialog(QDialog):
 class LibraryView(QWidget):
     """
     Library view displaying a list of all audio files registered in SQLite.
-    Supports real-time search, dropdown metadata filters, and double-click tag edits.
+    Includes right-click context actions and a built-in media audio player.
     """
-    song_updated = Signal()  # Emitted when a song is updated in the DB
+    song_updated = Signal(str, dict)  # Emitted when a song is updated (song_id, field_values)
 
     def __init__(self, db_manager: Optional[DBManager] = None):
         super().__init__()
         self.db = db_manager if db_manager else DBManager()
-        self.songs_list = []
+        self.songs_list: List[Dict[str, Any]] = []
+        
+        # Audio Player Backend
+        self.player = QMediaPlayer()
+        self.audio_output = QAudioOutput()
+        self.player.setAudioOutput(self.audio_output)
+        
+        # Connect player signals
+        self.player.positionChanged.connect(self.on_position_changed)
+        self.player.durationChanged.connect(self.on_duration_changed)
+        self.player.playbackStateChanged.connect(self.on_playback_state_changed)
+        
         self.init_ui()
 
     def init_ui(self):
@@ -126,8 +139,75 @@ class LibraryView(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.table.setSortingEnabled(True)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
         self.table.doubleClicked.connect(self.on_row_double_clicked)
+        self.table.itemSelectionChanged.connect(self.on_selection_changed)
         layout.addWidget(self.table)
+
+        # ==========================================
+        # Dynamic Interactive Audio Mini-Player
+        # ==========================================
+        self.player_panel = QWidget()
+        self.player_panel.setObjectName("CardFrame")
+        self.player_panel.setStyleSheet("""
+            QWidget#CardFrame {
+                background-color: #1e1e1e;
+                border: 1px solid #2d2d2d;
+                border-radius: 12px;
+            }
+        """)
+        player_layout = QVBoxLayout(self.player_panel)
+        player_layout.setContentsMargins(15, 12, 15, 12)
+        player_layout.setSpacing(8)
+
+        # Row 1: Track Details and Control Buttons
+        top_player_row = QHBoxLayout()
+        self.player_track_lbl = QLabel("Select a song to play")
+        self.player_track_lbl.setStyleSheet("font-weight: 600; color: #00adb5; font-size: 13px;")
+        top_player_row.addWidget(self.player_track_lbl, stretch=1)
+
+        self.play_btn = QPushButton("▶ Play")
+        self.play_btn.setFixedWidth(80)
+        self.play_btn.setEnabled(False)
+        self.play_btn.clicked.connect(self.toggle_playback)
+        top_player_row.addWidget(self.play_btn)
+
+        self.stop_btn = QPushButton("⏹ Stop")
+        self.stop_btn.setFixedWidth(80)
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self.stop_playback)
+        top_player_row.addWidget(self.stop_btn)
+
+        player_layout.addLayout(top_player_row)
+
+        # Row 2: Seeking Slider & Time label & Volume controller
+        bottom_player_row = QHBoxLayout()
+        
+        self.player_time_lbl = QLabel("00:00 / 00:00")
+        self.player_time_lbl.setStyleSheet("color: #888888; font-size: 11px;")
+        bottom_player_row.addWidget(self.player_time_lbl)
+
+        self.seek_slider = QSlider(Qt.Horizontal)
+        self.seek_slider.setRange(0, 100)
+        self.seek_slider.setValue(0)
+        self.seek_slider.sliderMoved.connect(self.on_seek_moved)
+        bottom_player_row.addWidget(self.seek_slider, stretch=1)
+
+        self.vol_lbl = QLabel("Vol: 70%")
+        self.vol_lbl.setStyleSheet("color: #888888; font-size: 11px;")
+        bottom_player_row.addWidget(self.vol_lbl)
+
+        self.vol_slider = QSlider(Qt.Horizontal)
+        self.vol_slider.setFixedWidth(80)
+        self.vol_slider.setRange(0, 100)
+        self.vol_slider.setValue(70)
+        self.vol_slider.valueChanged.connect(self.on_volume_changed)
+        self.audio_output.setVolume(0.7)  # Match default slider value
+        bottom_player_row.addWidget(self.vol_slider)
+
+        player_layout.addLayout(bottom_player_row)
+        layout.addWidget(self.player_panel)
 
         # Statistics summary
         self.status_lbl = QLabel("0 songs in library")
@@ -187,7 +267,8 @@ class LibraryView(QWidget):
             
         self.table.setSortingEnabled(True)
 
-    def on_row_double_clicked(self):
+    def on_selection_changed(self):
+        """Prepares selected song details for the audio player."""
         selected_ranges = self.table.selectedRanges()
         if not selected_ranges:
             return
@@ -196,16 +277,111 @@ class LibraryView(QWidget):
             return
             
         song_data = self.songs_list[row]
+        self.selected_song_path = song_data.get("current_path")
+        self.player_track_lbl.setText(f"Ready: {song_data.get('artist')} - {song_data.get('title')}")
+        self.play_btn.setEnabled(True)
+
+    def show_context_menu(self, pos):
+        """Displays right-click context actions on table rows."""
+        item = self.table.itemAt(pos)
+        if not item:
+            return
+            
+        row = item.row()
+        menu = QMenu(self)
+        
+        play_action = menu.addAction("Play Song")
+        edit_action = menu.addAction("Edit Details")
+        
+        action = menu.exec(self.table.mapToGlobal(pos))
+        if action == play_action:
+            self.play_song_at_row(row)
+        elif action == edit_action:
+            self.edit_song_at_row(row)
+
+    def play_song_at_row(self, row: int):
+        if row >= len(self.songs_list):
+            return
+        song_data = self.songs_list[row]
+        path_str = song_data.get("current_path")
+        
+        if path_str:
+            self.player_track_lbl.setText(f"Playing: {song_data.get('artist')} - {song_data.get('title')}")
+            self.player.setSource(QUrl.fromLocalFile(path_str))
+            self.player.play()
+            self.play_btn.setEnabled(True)
+            self.stop_btn.setEnabled(True)
+
+    def edit_song_at_row(self, row: int):
+        if row >= len(self.songs_list):
+            return
+        song_data = self.songs_list[row]
         cats = self.db.get_categories()
         
         dialog = TagEditDialog(song_data, cats, self)
         if dialog.exec() == QDialog.Accepted:
-            # Update database
             song_id = song_data["id"]
             saved = dialog.saved_data
-            
-            for field, val in saved.items():
-                self.db.update_song_field(song_id, field, val)
-                
-            self.load_library()
-            self.song_updated.emit()
+            self.song_updated.emit(song_id, saved)
+
+    def on_row_double_clicked(self):
+        selected_ranges = self.table.selectedRanges()
+        if not selected_ranges:
+            return
+        row = selected_ranges[0].topRow()
+        self.edit_song_at_row(row)
+
+    # ==========================================
+    # Audio Player Event Slots
+    # ==========================================
+    def toggle_playback(self):
+        state = self.player.playbackState()
+        if state == QMediaPlayer.PlaybackState.PlayingState:
+            self.player.pause()
+        else:
+            if hasattr(self, "selected_song_path") and self.selected_song_path:
+                # If player has no source or source is different, load it
+                if self.player.source().toLocalFile() != self.selected_song_path:
+                    self.player.setSource(QUrl.fromLocalFile(self.selected_song_path))
+                self.player.play()
+                self.stop_btn.setEnabled(True)
+
+    def stop_playback(self):
+        self.player.stop()
+        self.stop_btn.setEnabled(False)
+
+    def on_volume_changed(self, value: int):
+        self.audio_output.setVolume(value / 100.0)
+        self.vol_lbl.setText(f"Vol: {value}%")
+
+    def on_seek_moved(self, value: int):
+        self.player.setPosition(value)
+
+    def on_position_changed(self, position: int):
+        if not self.seek_slider.isSliderDown():
+            self.seek_slider.setValue(position)
+        self.update_time_label(position, self.player.duration())
+
+    def on_duration_changed(self, duration: int):
+        self.seek_slider.setRange(0, duration)
+        self.update_time_label(self.player.position(), duration)
+
+    def on_playback_state_changed(self, state: QMediaPlayer.PlaybackState):
+        if state == QMediaPlayer.PlaybackState.PlayingState:
+            self.play_btn.setText("⏸ Pause")
+        else:
+            self.play_btn.setText("▶ Play")
+
+    def update_time_label(self, position: int, duration: int):
+        pos_sec = position // 1000
+        dur_sec = duration // 1000
+        
+        pos_min = pos_sec // 60
+        pos_sec_rem = pos_sec % 60
+        
+        dur_min = dur_sec // 60
+        dur_sec_rem = dur_sec % 60
+        
+        self.player_time_lbl.setText(
+            f"{pos_min:02d}:{pos_sec_rem:02d} / {dur_min:02d}:{dur_sec_rem:02d}"
+        )

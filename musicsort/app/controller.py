@@ -55,7 +55,7 @@ class AppController(QObject):
         self.win.scan_view.scan_triggered.connect(self.start_scan)
         
         # Library page
-        self.win.library_view.song_updated.connect(self.refresh_all_views)
+        self.win.library_view.song_updated.connect(self.on_song_updated)
         
         # Categories page
         self.win.categories_view.categories_changed.connect(self.on_categories_modified)
@@ -108,6 +108,21 @@ class AppController(QObject):
 
         # Update Backups
         self.refresh_backups_list()
+
+    @Slot(str, dict)
+    def on_song_updated(self, song_id: str, saved_data: dict):
+        """Updates song metadata in DB and writes changes to the physical file tags."""
+        # 1. Update database records
+        for field, val in saved_data.items():
+            self.db.update_song_field(song_id, field, val)
+
+        # 2. Write updated tags back to the physical audio file
+        song = self.db.get_song(song_id)
+        if song and song.get("current_path"):
+            from musicsort.utils import write_tags_to_file
+            write_tags_to_file(Path(song["current_path"]), saved_data)
+            
+        self.refresh_all_views()
 
     def update_dashboard(self):
         total_songs = len(self.songs)

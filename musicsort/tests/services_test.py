@@ -196,5 +196,11 @@ class TestServices(unittest.TestCase):
         song = self.db.get_song(self.song1.id)
         self.assertEqual(song["current_path"], str(self.file1.resolve()))
 
+    def test_physical_tag_writing_on_invalid_file(self):
+        from musicsort.utils.tag_writer import write_tags_to_file
+        # A dummy file will fail mutagen parsing, returning False
+        res = write_tags_to_file(self.file1, {"title": "New Title"})
+        self.assertFalse(res)
+
 if __name__ == "__main__":
     unittest.main()
